@@ -27,12 +27,11 @@
 #include <dovecot/mail-storage-private.h>
 #include <dovecot/module-context.h>
 #include <dovecot/notify-plugin.h>
-
-#include <mapistore/mapistore.h>
-#include <mapistore/mapistore_errors.h>
-
+#include <dovecot/str.h>
+#include <string.h>
 #include <nanomsg/nn.h>
 #include <nanomsg/pipeline.h>
+#include "elastic.h"
 
 #ifndef __BEGIN_DECLS
 #ifdef	__cplusplus
@@ -44,43 +43,43 @@
 #endif
 #endif
 
-#define	flag_notify_USER_CONTEXT(obj) MODULE_CONTEXT(obj, flag_notify_user_module)
-
+#define	FLAG_NOTIFY_USER_CONTEXT(obj) MODULE_CONTEXT(obj, flag_notify_user_module)
 const char		*flag_notify_plugin_version = DOVECOT_ABI_VERSION;
 const char	*flag_notify_plugin_dependencies[] = { "notify", NULL };
 struct notify_context	*flag_notify_ctx;
 
 enum flag_notify_field {
-	flag_notify_FIELD_UID		= 0x1,
-	flag_notify_FIELD_BOX		= 0x2,
-	flag_notify_FIELD_MSGID		= 0x4,
-	flag_notify_FIELD_PSIZE		= 0x8,
-	flag_notify_FIELD_VSIZE		= 0x10,
-	flag_notify_FIELD_FLAGS		= 0x20,
-	flag_notify_FIELD_FROM		= 0x40,
-	flag_notify_FIELD_SUBJECT	= 0x80
+	FLAG_NOTIFY_FIELD_UID		= 0x1,
+	FLAG_NOTIFY_FIELD_BOX		= 0x2,
+	FLAG_NOTIFY_FIELD_MSGID		= 0x4,
+	FLAG_NOTIFY_FIELD_PSIZE		= 0x8,
+	FLAG_NOTIFY_FIELD_VSIZE		= 0x10,
+	FLAG_NOTIFY_FIELD_FLAGS		= 0x20,
+	FLAG_NOTIFY_FIELD_FROM		= 0x40,
+	FLAG_NOTIFY_FIELD_SUBJECT	= 0x80
 };
 
-#define	flag_notify_DEFAULT_FIELDS \
-	(flag_notify_FIELD_UID | flag_notify_FIELD_BOX | \
-	 flag_notify_FIELD_MSGID | flag_notify_FIELD_PSIZE)
+#define	FLAG_NOTIFY_DEFAULT_FIELDS \
+	(FLAG_NOTIFY_FIELD_UID | FLAG_NOTIFY_FIELD_BOX | \
+	FLAG_NOTIFY_FIELD_MSGID | FLAG_NOTIFY_FIELD_PSIZE)
 
 enum flag_notify_event {
-	flag_notify_EVENT_DELETE		= 0x1,
-	flag_notify_EVENT_UNDELETE	= 0x2,
-	flag_notify_EVENT_EXPUNGE	= 0x4,
-	flag_notify_EVENT_SAVE		= 0x8,
-	flag_notify_EVENT_COPY		= 0x10,
-	flag_notify_EVENT_MAILBOX_CREATE	= 0x20,
-	flag_notify_EVENT_MAILBOX_DELETE	= 0x40,
-	flag_notify_EVENT_MAILBOX_RENAME	= 0x80,
-	flag_notify_EVENT_FLAG_CHANGE	= 0x100
+	FLAG_NOTIFY_EVENT_DELETE		= 0x1,
+	FLAG_NOTIFY_EVENT_UNDELETE	= 0x2,
+	FLAG_NOTIFY_EVENT_EXPUNGE	= 0x4,
+	FLAG_NOTIFY_EVENT_SAVE		= 0x8,
+	FLAG_NOTIFY_EVENT_COPY		= 0x10,
+	FLAG_NOTIFY_EVENT_MAILBOX_CREATE	= 0x20,
+	FLAG_NOTIFY_EVENT_MAILBOX_DELETE	= 0x40,
+	FLAG_NOTIFY_EVENT_MAILBOX_RENAME	= 0x80,
+	FLAG_NOTIFY_EVENT_FLAG_CHANGE	= 0x100
 };
 
-#define	flag_notify_DEFAULT_EVENTS	(flag_notify_EVENT_SAVE)
+#define FLAG_NOTIFY_DEFAULT_EVENTS	(FLAG_NOTIFY_EVENT_SAVE)
 
 struct flag_notify_user {
 	union mail_user_module_context	module_ctx;
+	struct elastic_connection       *conn;
 	enum flag_notify_field		fields;
 	enum flag_notify_event		events;
 	const char			*resolver;
@@ -109,8 +108,6 @@ __BEGIN_DECLS
 
 void flag_notify_plugin_init(struct module *);
 void flag_notify_plugin_deinit(void);
-enum mapistore_error mapistore_notification_init(TALLOC_CTX *, struct loadparm_context *,
-						 struct mapistore_notification_context **);
 
 __END_DECLS
 
@@ -121,20 +118,14 @@ static void flag_notify_mail_user_created(struct mail_user *user)
 	struct flag_notify_user	*ocuser;
 	const char		*str;
 	char			*aux;
-
+	const char              *elastic;
 	ocuser = p_new(user->pool, struct flag_notify_user, 1);
 	MODULE_CONTEXT_SET(user, flag_notify_user_module, ocuser);
 
-	ocuser->fields = flag_notify_DEFAULT_FIELDS;
-	ocuser->events = flag_notify_DEFAULT_EVENTS;
-
-	str = mail_user_plugin_getenv(user, "flag_notify_resolver");
-	if (str == NULL) {
-		ocuser->resolver = NULL;
-	} else {
-		ocuser->resolver = i_strdup(str);
-	}
-
+	ocuser->fields = FLAG_NOTIFY_DEFAULT_FIELDS;
+	ocuser->events = FLAG_NOTIFY_DEFAULT_EVENTS;
+        elastic = mail_user_plugin_getenv(user, "flag_notify_elastic");
+	i_debug("\n ============= CREATED ========== \n%s", elastic);
 	str = mail_user_plugin_getenv(user, "flag_notify_cn");
 	if ((str == NULL) || !strcmp(str, "username")) {
 		aux = i_strdup(user->username);
@@ -152,6 +143,20 @@ static void flag_notify_mail_user_created(struct mail_user *user)
 	} else {
 		ocuser->backend = i_strdup(str);
 	}
+        //struct flag_notify_user *user_test = MODULE_CONTEXT(user, flag_notify_user_module);
+        //i_debug("\n ============= USER ========== %s\n", user_test->username);
+	
+	//struct fts_elastic_settings *s = i_new(struct fts_elastic_settings, 1);
+
+
+	//struct elastic_connection *conn = NULL;
+	//conn = i_new(struct elastic_connection, 1);
+	//ocuser->conn = conn;
+        //s->url = i_strdup(elastic);
+        //i_debug("\n ============= USSSS ========== %s\n", s->url);
+	//elastic_connection_init_new(s, &ocuser->conn);
+
+	//i_debug("\n ESSSSSSSSSSSS %s\n", ocuser->conn->es_username);
 }
 
 static void flag_notify_append_mail_message(struct flag_notify_mail_txn_context *ctx,
@@ -171,7 +176,7 @@ static void flag_notify_mail_save(void *txn, struct mail *mail)
 	struct flag_notify_mail_txn_context	*ctx;
 
 	ctx = (struct flag_notify_mail_txn_context *) txn;
-	flag_notify_append_mail_message(ctx, mail, flag_notify_EVENT_SAVE);
+	flag_notify_append_mail_message(ctx, mail, FLAG_NOTIFY_EVENT_SAVE);
 }
 
 static void flag_notify_mail_copy(void *txn, struct mail *src, struct mail *dst)
@@ -179,7 +184,7 @@ static void flag_notify_mail_copy(void *txn, struct mail *src, struct mail *dst)
 	struct flag_notify_mail_txn_context	*ctx;
 
 	ctx = (struct flag_notify_mail_txn_context *) txn;
-	flag_notify_append_mail_message(ctx, dst, flag_notify_EVENT_COPY);
+	flag_notify_append_mail_message(ctx, dst, FLAG_NOTIFY_EVENT_COPY);
 }
 
 static void *flag_notify_mail_transaction_begin(struct mailbox_transaction_context *t)
@@ -200,114 +205,7 @@ static void *flag_notify_mail_transaction_begin(struct mailbox_transaction_conte
 static bool flag_notify_newmail(struct flag_notify_user *user,
 			       const struct flag_notify_message *msg)
 {
-	TALLOC_CTX				*mem_ctx;
-	enum mapistore_error			retval;
-	struct loadparm_context			*lp_ctx;
-	struct mapistore_context		mstore_ctx;
-	struct mapistore_notification_context	*ctx;
-	bool					bret;
-	int					ret = false;
-	int					rc;
-	int					sock;
-	int					endpoint;
-	int					timeout;
-	int					i;
-	int					bytes;
-	uint32_t				count = 0;
-	const char				**hosts = NULL;
-	char					*data = NULL;
-	uint8_t					*blob = NULL;
-	size_t					msglen;
-
-	mem_ctx = talloc_new(NULL);
-	if (!mem_ctx) {
-		i_debug("unable to initialize memory context");
-		return false;
-	}
-
-	lp_ctx = loadparm_init_global(true);
-	if (!lp_ctx) {
-		i_debug("unable to load global parameters");
-		talloc_free(mem_ctx);
-		return false;
-	}
-
-	data = talloc_asprintf(mem_ctx, "%d.eml", msg->uid);
-	if (!data) {
-		i_debug("unable to allocate memory");
-		goto end;
-	}
-
-	retval = mapistore_notification_payload_newmail(mem_ctx, (char *) user->backend, data, (char *) msg->destination_folder,
-							msg->sep, &blob, &msglen);
-	talloc_free(data);
-	if (retval) {
-		i_debug("unable to generate newmail payload for user %s with msg uid=%d",
-			user->username, msg->uid);
-		goto end;
-	}
-
-	/* initialize mapistore notification */
-	if (user->resolver) {
-		bret = lpcfg_set_cmdline(lp_ctx, "mapistore:notification_cache", user->resolver);
-		if (bret == false) {
-			i_fatal("unable to set resolver address '%s'", user->resolver);
-		}
-	}
-	retval = mapistore_notification_init(mem_ctx, lp_ctx, &ctx);
-	if (retval != MAPISTORE_SUCCESS) {
-		i_debug("unable to initialize mapistore notification");
-		goto end;
-	}
-	mstore_ctx.notification_ctx = ctx;
-
-	/* Check if the user is registered */
-	retval = mapistore_notification_resolver_exist(&mstore_ctx, user->username);
-	if (retval) {
-		i_debug("resolver: %s", mapistore_errstr(retval));
-		goto end;
-	}
-
-	/* Retrieve server instances */
-	retval = mapistore_notification_resolver_get(mem_ctx, &mstore_ctx, user->username,
-						     &count, &hosts);
-	if (retval) {
-		i_debug("resolver record: %s", mapistore_errstr(retval));
-		goto end;
-	}
-
-	/* Create socket with super powers */
-	sock = nn_socket(AF_SP, NN_PUSH);
-	if (sock < 0) {
-		i_debug("unable to create socket");
-		return false;
-	}
-
-	timeout = 200;
-	rc = nn_setsockopt(sock, NN_SOL_SOCKET, NN_SNDTIMEO, &timeout, sizeof(timeout));
-	if (rc < 0) {
-		i_debug("unable to set timeout on socket send");
-		goto end;
-	}
-
-	for (i = 0; i < count; i++) {
-		endpoint = nn_connect(sock, hosts[i]);
-		if (endpoint < 0) {
-			oc_log(OC_LOG_ERROR, "unable to connect to %s", hosts[i]);
-			continue;
-		}
-		bytes = nn_send(sock, (char *)blob, msglen, 0);
-		if (bytes != msglen) {
-			i_debug("Error sending msg: %d sent but %zu expected", bytes, msglen);
-		}
-		nn_shutdown(sock, endpoint);
-	}
-
-	ret = true;
-end:
-	talloc_free(lp_ctx);
-	talloc_free(mem_ctx);
-	return ret;
+	
 }
 
 static void flag_notify_mail_transaction_commit(void *txn, struct mail_transaction_commit_changes *changes)
@@ -321,21 +219,20 @@ static void flag_notify_mail_transaction_commit(void *txn, struct mail_transacti
 	unsigned int				n = 0;
 
 	ctx = (struct flag_notify_mail_txn_context *)txn;
-	user = flag_notify_USER_CONTEXT(ctx->ns->user);
-
+	user = FLAG_NOTIFY_USER_CONTEXT(ctx->ns->user);
 	seq_range_array_iter_init(&iter, &changes->saved_uids);
 	for (msg = ctx->messages; msg != NULL; msg = msg->next) {
-		if (msg->event == flag_notify_EVENT_COPY ||
-		    msg->event == flag_notify_EVENT_SAVE) {
+		if (msg->event == FLAG_NOTIFY_EVENT_COPY ||
+		    msg->event == FLAG_NOTIFY_EVENT_SAVE) {
 			if (seq_range_array_iter_nth(&iter, n++, &uid)) {
 				msg->uid = uid;
-				flag_notify_newmail(user, msg);
+				//flag_notify_newmail(user, msg);
 			}
 		}
 	}
 
 	i_assert(!seq_range_array_iter_nth(&iter, n, &uid));
-	pool_unref(&ctx->pool);
+	pool_unref(&ctx->pool);	
 }
 
 
@@ -347,10 +244,50 @@ static void flag_notify_mail_transaction_rollback(void *txn)
 	pool_unref(&ctx->pool);
 }
 
+static void mail_log_mail_update_flags(void *txn, struct mail *mail,
+						       enum mail_flags old_flags)
+{
+	i_debug("\n CHANGE ============%d\n", old_flags);
+   //struct mail_private *p = (struct mail_private *)mail;
+   struct flag_notify_mail_txn_context	*ctx;
+   struct flag_notify_user *user;;
+
+   ctx = (struct flag_notify_mail_txn_context *)txn;
+   user = FLAG_NOTIFY_USER_CONTEXT(ctx->ns->user);
+   //char* t = p->v.get_keywords(mail);
+   //string_t *text;
+   //text = t_str_new(128);
+   //imap_write_flags(text, mail_get_flags(mail),
+   //                            mail_get_keywords(mail));
+   //
+   //char *t = c_str(mail_get_keywords(mail));
+   string_t *text;
+   text = t_str_new(128);
+   imap_write_flags(text, mail_get_flags(mail),
+                                 mail_get_keywords(mail));
+   i_debug("\n keyword =========== %s\n", str_c(text));
+   
+   if(user->conn == NULL){
+	const char *elastic;
+	struct fts_elastic_settings *s = i_new(struct fts_elastic_settings, 1);
+	struct elastic_connection *conn = NULL;
+	conn = i_new(struct elastic_connection, 1);
+        //user->conn = conn;
+	elastic = mail_user_plugin_getenv(user, "flag_notify_elastic");
+	s->url = i_strdup(elastic);
+	elastic_connection_init_new(&s, &conn);
+	i_debug("\n ============= CHANGE USER ========== %s\n", elastic);
+   }
+   
+   
+   //struct flag_notify_user *user_test = MODULE_CONTEXT(user, flag_notify_user_module);
+   //i_debug("\n ============= CHANGE USER ========== %s\n", user->conn->es_username);
+}
 
 static const struct notify_vfuncs flag_notify_vfuncs = {
 	.mail_save = flag_notify_mail_save,
 	.mail_copy = flag_notify_mail_copy,
+	.mail_update_flags = mail_log_mail_update_flags,
 	.mail_transaction_begin = flag_notify_mail_transaction_begin,
 	.mail_transaction_commit = flag_notify_mail_transaction_commit,
 	.mail_transaction_rollback = flag_notify_mail_transaction_rollback
